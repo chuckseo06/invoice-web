@@ -8,7 +8,11 @@
       "mcp__playwright__browser_snapshot",
       "mcp__playwright__browser_console_messages",
       "mcp__playwright__browser_evaluate",
-      "mcp__playwright__browser_close"
+      "mcp__playwright__browser_close",
+      "mcp__shadcn__get_project_registries",
+      "mcp__shadcn__get_item_examples_from_registries",
+      "mcp__shadcn__get_add_command_for_items",
+      "mcp__shadcn__get_audit_checklist"
     ]
   },
   "enableAllProjectMcpServers": true,
