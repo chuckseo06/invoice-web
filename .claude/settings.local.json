@@ -15,11 +15,15 @@
       "mcp__shadcn__get_audit_checklist",
       "mcp__context7__resolve-library-id",
       "mcp__context7__query-docs",
+      "mcp__sequential-thinking__sequentialthinking",
       "Skill(update-config)"
     ]
   },
   "enableAllProjectMcpServers": true,
   "enabledMCPjsonServers": [
-    "playwright"
+    "playwright",
+    "context7",
+    "sequential-thinking",
+    "shadcn"
   ]
 }
