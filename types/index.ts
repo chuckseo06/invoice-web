@@ -32,3 +32,28 @@ export interface ActivityLog {
   timestamp: string
   status: "success" | "pending" | "failed"
 }
+
+// Quote 상태
+export type QuoteStatus = "Draft" | "Sent" | "Accepted" | "Rejected"
+
+// 견적서 (Notion DB에서 조회한 데이터)
+export interface Quote {
+  id: string // Notion 페이지 ID
+  quoteId: string // UUID (공개 URL용)
+  title: string
+  clientName: string
+  amount: number
+  description: string
+  status: QuoteStatus
+  validUntil?: string // ISO 날짜 형식
+  createdDate?: string // ISO 날짜 형식
+}
+
+// 견적서 생성 폼 입력
+export interface CreateQuoteInput {
+  title: string
+  clientName: string
+  amount: number
+  description?: string
+  validUntil?: string
+}

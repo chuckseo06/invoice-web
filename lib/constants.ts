@@ -9,12 +9,25 @@ import {
   Globe,
   TrendingUp,
   Users2,
+  FileText,
 } from "lucide-react"
-import type { NavLink, Feature, StatCard, ActivityLog } from "@/types"
+import type { NavLink, Feature, StatCard, ActivityLog, QuoteStatus } from "@/types"
+
+// Notion 데이터베이스 ID
+export const NOTION_DATABASE_ID = process.env.NOTION_DATABASE_ID || ""
+
+// 견적서 상태 옵션
+export const QUOTE_STATUS: Record<QuoteStatus, { label: string; color: string }> = {
+  Draft: { label: "작성 중", color: "bg-gray-100 text-gray-800" },
+  Sent: { label: "발송됨", color: "bg-blue-100 text-blue-800" },
+  Accepted: { label: "승인됨", color: "bg-green-100 text-green-800" },
+  Rejected: { label: "거절됨", color: "bg-red-100 text-red-800" },
+}
 
 // 네비게이션 링크
 export const NAV_LINKS: NavLink[] = [
   { label: "대시보드", href: "/dashboard", icon: LayoutDashboard },
+  { label: "견적서", href: "/quotes", icon: FileText },
   { label: "사용자", href: "/users", icon: Users },
   { label: "분석", href: "/analytics", icon: BarChart3 },
   { label: "설정", href: "/settings", icon: Settings },
