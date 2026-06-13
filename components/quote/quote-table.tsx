@@ -32,10 +32,17 @@ export function QuoteTable({ quotes }: QuoteTableProps) {
   function handleStatusChange(quote: Quote, newStatus: QuoteStatus) {
     startTransition(async () => {
       try {
-        await updateQuoteStatus(quote.id, newStatus)
-        toast.success("상태가 변경되었습니다.")
-      } catch {
-        toast.error("상태 변경에 실패했습니다.")
+        const result = await updateQuoteStatus(quote.id, newStatus)
+        if (result.success) {
+          toast.success("상태가 변경되었습니다.")
+        } else {
+          toast.error(result.error || "상태 변경에 실패했습니다.")
+        }
+      } catch (error) {
+        const errorMessage =
+          error instanceof Error ? error.message : "상태 변경 중 오류가 발생했습니다"
+        toast.error(errorMessage)
+        console.error("상태 변경 오류:", error)
       }
     })
   }
@@ -56,11 +63,18 @@ export function QuoteTable({ quotes }: QuoteTableProps) {
     if (!deleteTarget) return
     startTransition(async () => {
       try {
-        await deleteQuote(deleteTarget.id)
-        toast.success("견적서가 삭제되었습니다.")
-        setDeleteTarget(null)
-      } catch {
-        toast.error("삭제에 실패했습니다.")
+        const result = await deleteQuote(deleteTarget.id)
+        if (result.success) {
+          toast.success("견적서가 삭제되었습니다.")
+          setDeleteTarget(null)
+        } else {
+          toast.error(result.error || "삭제에 실패했습니다.")
+        }
+      } catch (error) {
+        const errorMessage =
+          error instanceof Error ? error.message : "삭제 중 오류가 발생했습니다"
+        toast.error(errorMessage)
+        console.error("삭제 오류:", error)
       }
     })
   }
@@ -85,7 +99,7 @@ export function QuoteTable({ quotes }: QuoteTableProps) {
           <TableRow>
             <TableHead>제목</TableHead>
             <TableHead>클라이언트</TableHead>
-            <TableHead className="text-right">금액</TableHead>
+            <TableHead className="text-right">금액 합계</TableHead>
             <TableHead>상태</TableHead>
             <TableHead>유효기간</TableHead>
             <TableHead>생성일</TableHead>
@@ -97,7 +111,7 @@ export function QuoteTable({ quotes }: QuoteTableProps) {
             <TableRow key={quote.id}>
               <TableCell className="font-medium">{quote.title}</TableCell>
               <TableCell>{quote.clientName}</TableCell>
-              <TableCell className="text-right">{formatAmount(quote.amount)}</TableCell>
+              <TableCell className="text-right">{formatAmount(quote.totalAmount)}</TableCell>
               <TableCell>
                 <StatusBadge status={quote.status} />
               </TableCell>

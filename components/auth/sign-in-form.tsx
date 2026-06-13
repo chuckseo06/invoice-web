@@ -43,7 +43,8 @@ export function SignInForm() {
     defaultValues: { email: "", password: "" },
   })
 
-  async function onSubmit(data: SignInFormValues) {
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  async function onSubmit(_data: SignInFormValues) {
     try {
       setIsLoading(true)
       await new Promise((resolve) => setTimeout(resolve, 1000))

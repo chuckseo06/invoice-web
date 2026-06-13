@@ -144,32 +144,70 @@
 
 ## 데이터 모델
 
-### Quote (Notion 데이터베이스 스키마)
+### 데이터베이스 구조 (2개 DB 분리)
+
+> **설계 방식**: Invoice(견적서 자체) + Items(라인 아이템) 정규화 구조
+> **장점**: 개별 견적 관리 + 전체 아이템 통합 관리 모두 가능
+
+---
+
+### 1️⃣ Invoice 데이터베이스 (견적서 정보)
 
 | 필드 | 설명 | 타입/관계 |
 |------|------|----------|
 | id | Notion 페이지 고유 ID | UUID (Notion 자동) |
+| invoiceId | 공유용 고유 ID (공개 URL용) | Rich Text (UUID, 수동 생성) |
 | title | 견적서 제목 | Title (Notion) |
 | clientName | 클라이언트명 | Rich Text |
-| amount | 총 금액 (₩) | Number |
-| description | 프로젝트 설명 및 항목 | Rich Text |
 | status | 견적서 상태 | Select (Draft / Sent / Accepted / Rejected) |
 | validUntil | 유효기간 | Date |
 | createdDate | 생성일 | Date |
-| quoteId | 공유용 고유 ID (공개 URL용) | Rich Text (UUID, 수동 생성) |
+| totalAmount | 총 금액 (₩) | Rollup (Items의 subtotal 합계) |
+| items | 포함된 라인 아이템 | Relation → Items DB |
 
-### QuoteRow (TypeScript 타입 - `lib/notion-helpers.ts`)
+---
+
+### 2️⃣ Items 데이터베이스 (개별 라인 아이템)
+
+| 필드 | 설명 | 타입/관계 |
+|------|------|----------|
+| id | Notion 페이지 고유 ID | UUID (Notion 자동) |
+| invoiceId | 소속 견적서 ID | Relation → Invoice DB |
+| itemName | 항목 이름 | Title (Notion) |
+| description | 항목 설명 (선택사항) | Rich Text |
+| quantity | 수량 | Number |
+| unitPrice | 단가 (₩) | Number |
+| subtotal | 소계 (=quantity × unitPrice) | Rollup 또는 Formula |
+| order | 정렬 순서 | Number |
+| createdDate | 생성일 | Date |
+
+---
+
+### InvoiceRow (TypeScript 타입 - `lib/notion-helpers.ts`)
 
 | 필드 | 설명 | 타입/관계 |
 |------|------|----------|
 | id | Notion 페이지 ID | string |
-| quoteId | 공개 URL용 UUID | string |
+| invoiceId | 공개 URL용 UUID | string |
 | title | 견적서 제목 | string |
 | clientName | 클라이언트명 | string |
-| amount | 금액 | number |
-| description | 설명 | string |
 | status | 상태 | "Draft" / "Sent" / "Accepted" / "Rejected" |
 | validUntil | 유효기간 | string (ISO 8601) |
+| createdDate | 생성일 | string (ISO 8601) |
+| totalAmount | 총 금액 | number |
+| items | 라인 아이템 배열 | ItemRow[] |
+
+### ItemRow (TypeScript 타입 - `lib/notion-helpers.ts`)
+
+| 필드 | 설명 | 타입 |
+|------|------|------|
+| id | Notion 페이지 ID | string |
+| itemName | 항목 이름 | string |
+| description | 항목 설명 | string |
+| quantity | 수량 | number |
+| unitPrice | 단가 | number |
+| subtotal | 소계 | number |
+| order | 정렬 순서 | number |
 | createdDate | 생성일 | string (ISO 8601) |
 
 ---
@@ -218,8 +256,14 @@
 ```
 # .env.local
 NOTION_TOKEN=secret_xxxxxxxxxxxx
-NOTION_DATABASE_ID=xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+NOTION_INVOICE_DATABASE_ID=xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+NOTION_ITEMS_DATABASE_ID=xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
 ```
+
+**설정 방법:**
+1. Notion에서 Invoice, Items 데이터베이스 2개 생성
+2. Integration 생성 후 토큰 복사 → `NOTION_TOKEN`
+3. 각 데이터베이스의 URL에서 32자 ID 추출 → `NOTION_*_DATABASE_ID`
 
 ---
 
@@ -228,30 +272,41 @@ NOTION_DATABASE_ID=xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
 ```
 app/
 ├── (app)/
-│   └── quotes/
-│       ├── page.tsx              # F001, F003, F004, F005 - 어드민 목록
+│   └── invoices/                  # Invoice 관리 페이지
+│       ├── page.tsx               # F001, F003, F004, F005 - 어드민 목록
 │       └── new/
-│           └── page.tsx          # F002 - 견적서 생성 폼
+│           └── page.tsx           # F002 - 견적서 생성 폼
 │
-└── quote/
+├── items/                         # Items 관리 페이지 (통합 관리용, MVP 이후)
+│   └── page.tsx                   # 모든 라인 아이템 통합 조회/관리
+│
+└── invoice/
     └── [id]/
-        └── page.tsx              # F006, F007 - 클라이언트 공개 뷰
+        └── page.tsx               # F006, F007 - 클라이언트 공개 뷰
 
 app/actions/
-└── notion-quote.ts               # Server Actions (생성/삭제/상태변경)
+├── notion-invoice.ts              # Server Actions (Invoice: 생성/삭제/상태변경)
+└── notion-items.ts                # Server Actions (Items: 생성/삭제/수정, MVP 이후)
 
 lib/
-├── notion.ts                     # Notion 클라이언트 싱글톤
-├── notion-helpers.ts             # Notion 응답 → QuoteRow 타입 변환
-└── pdf-generator.ts              # html2pdf.js 래퍼 유틸
+├── notion.ts                      # Notion 클라이언트 싱글톤
+├── notion-helpers.ts              # Notion 응답 → InvoiceRow/ItemRow 타입 변환
+└── pdf-generator.ts               # html2pdf.js 래퍼 유틸
 
 components/
-└── quote/
-    ├── quote-form.tsx            # 생성 폼 컴포넌트 ("use client")
-    ├── quote-display.tsx         # 클라이언트 뷰 컴포넌트 (PDF 포함, "use client")
-    ├── quote-table.tsx           # 어드민 목록 테이블 컴포넌트
-    └── status-badge.tsx          # 상태 뱃지 컴포넌트
+├── invoice/                       # Invoice 관련 컴포넌트
+│   ├── invoice-form.tsx           # 생성 폼 컴포넌트 ("use client")
+│   ├── invoice-display.tsx        # 클라이언트 뷰 컴포넌트 (PDF 포함, "use client")
+│   ├── invoice-table.tsx          # 어드민 목록 테이블 컴포넌트
+│   └── status-badge.tsx           # 상태 뱃지 컴포넌트
+│
+└── items/                         # Items 관련 컴포넌트 (MVP 이후)
+    ├── items-form.tsx             # 아이템 추가 폼 ("use client")
+    └── items-table.tsx            # 아이템 목록 테이블
 ```
+
+**MVP v1 (현재)**: Invoice 기본 관리 (F001~F007)
+**MVP v2 (이후)**: Items 통합 관리 + Invoice 폼 개선
 
 ---
 

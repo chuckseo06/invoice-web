@@ -10,11 +10,10 @@ import {
   TrendingUp,
   Users2,
   FileText,
+  Clock,
+  CheckCircle,
 } from "lucide-react"
 import type { NavLink, Feature, StatCard, ActivityLog, QuoteStatus } from "@/types"
-
-// Notion 데이터베이스 ID
-export const NOTION_DATABASE_ID = process.env.NOTION_DATABASE_ID || ""
 
 // 견적서 상태 옵션
 export const QUOTE_STATUS: Record<QuoteStatus, { label: string; color: string }> = {
@@ -67,78 +66,78 @@ export const FEATURES: Feature[] = [
   },
 ]
 
-// 통계 카드 목업 데이터
+// 통계 카드 목업 데이터 (견적서 관련)
 export const MOCK_STATS: StatCard[] = [
   {
-    title: "총 사용자",
-    value: "12,543",
-    change: "+12% vs 지난달",
+    title: "전체 견적서",
+    value: "12건",
+    change: "+3건 vs 지난달",
     trend: "up",
-    icon: Users,
+    icon: FileText,
   },
   {
-    title: "매출",
-    value: "$45,231.89",
+    title: "이번 달 매출",
+    value: "₩11,500,000",
     change: "+8% vs 지난달",
     trend: "up",
     icon: TrendingUp,
   },
   {
-    title: "활성 세션",
-    value: "8,234",
-    change: "-2% vs 지난달",
-    trend: "down",
-    icon: BarChart3,
+    title: "대기 중",
+    value: "3건",
+    change: "Sent 상태",
+    trend: "neutral",
+    icon: Clock,
   },
   {
-    title: "완료율",
-    value: "94.2%",
-    change: "+3.5% vs 지난달",
+    title: "승인됨",
+    value: "7건",
+    change: "Accepted 상태",
     trend: "up",
-    icon: LayoutDashboard,
+    icon: CheckCircle,
   },
 ]
 
-// 활동 로그 목록 목업 데이터
+// 활동 로그 목록 목업 데이터 (최근 견적서 목록)
 export const MOCK_ACTIVITY: ActivityLog[] = [
   {
     id: "1",
-    user: "Alex Kim",
-    action: "로그인",
-    target: "시스템",
-    timestamp: "2024년 2월 15일 14:32",
-    status: "success",
+    title: "웹사이트 리디자인",
+    clientName: "ABC 테크",
+    amount: 4800000,
+    createdDate: "2026-06-10",
+    status: "Sent",
   },
   {
     id: "2",
-    user: "Sarah Chen",
-    action: "파일 업로드",
-    target: "report_2024.pdf",
-    timestamp: "2024년 2월 15일 13:15",
-    status: "success",
+    title: "모바일 앱 개발",
+    clientName: "XYZ 스타트업",
+    amount: 3000000,
+    createdDate: "2026-06-05",
+    status: "Draft",
   },
   {
     id: "3",
-    user: "John Doe",
-    action: "설정 변경",
-    target: "팀 권한",
-    timestamp: "2024년 2월 15일 12:48",
-    status: "pending",
+    title: "SEO 최적화",
+    clientName: "마케팅 에이전시",
+    amount: 800000,
+    createdDate: "2026-05-20",
+    status: "Accepted",
   },
   {
     id: "4",
-    user: "Emma Wilson",
-    action: "데이터 내보내기",
-    target: "quarterly_report.xlsx",
-    timestamp: "2024년 2월 15일 11:22",
-    status: "success",
+    title: "데이터 분석 대시보드",
+    clientName: "금융사 A",
+    amount: 2500000,
+    createdDate: "2026-05-15",
+    status: "Rejected",
   },
   {
     id: "5",
-    user: "Michael Brown",
-    action: "접근 거부",
-    target: "관리자 패널",
-    timestamp: "2024년 2월 15일 10:05",
-    status: "failed",
+    title: "프론트엔드 개발",
+    clientName: "ABC 회사",
+    amount: 4000000,
+    createdDate: "2026-06-13",
+    status: "Accepted",
   },
 ]

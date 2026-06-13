@@ -25,6 +25,16 @@
         "shadcn@latest",
         "mcp"
       ]
+    },
+    "shrimp-task-manager": {
+          "command": "node",
+          "args": ["/users/lenovo/workspace/mcp-shrimp-task-manager/dist/index.js"],
+          "env": {
+            "DATA_DIR": "/users/lenovo/workspace/courses/invoice-web/shrimp_data",
+            "TEMPLATES_USE": "en",
+            "ENABLE_GUI": "true"
+          }
+        }
+      }
     }
-  }
-}
+  
