@@ -20,8 +20,8 @@ const geistMono = Geist_Mono({
 })
 
 export const metadata: Metadata = {
-  title: "Next.js 스타터킷",
-  description: "모던 웹 개발을 위한 Next.js 스타터킷",
+  title: "Invoice Web | 견적서 관리 시스템",
+  description: "Notion 기반 견적서 생성 및 관리 시스템",
 }
 
 export default function RootLayout({
