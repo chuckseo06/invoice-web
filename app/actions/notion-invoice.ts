@@ -5,6 +5,8 @@ import { unstable_cache } from "next/cache"
 import { v4 as uuidv4 } from "uuid"
 import { notion, NOTION_INVOICE_DB_ID } from "@/lib/notion"
 import { pageToInvoice } from "@/lib/notion-helpers"
+import { checkRateLimit } from "@/lib/rate-limiter"
+import { logDebug, logInfo, logWarn, logError } from "@/lib/logger"
 import type { Invoice, CreateInvoiceInput, QuoteStatus, InvoiceItem } from "@/types"
 
 // 더미 모드 설정 (UI/UX 테스트용) — 실제 API 연동 시 false로 변경 후 삭제
@@ -108,10 +110,23 @@ const DEMO_INVOICES: Invoice[] = [
   },
 ]
 
-// 전체 견적서 조회 (1시간 캐싱)
+// 전체 견적서 조회 (60초 캐싱)
 const _getInvoices = async (): Promise<Invoice[]> => {
+  logDebug("getInvoices", "견적서 목록 조회 시작")
+
   if (DEMO_MODE) {
+    logDebug("getInvoices", "더미 모드 - 데모 데이터 반환", {
+      count: DEMO_INVOICES.length,
+    })
     return DEMO_INVOICES
+  }
+
+  // Rate Limit 체크
+  const { allowed, retryAfter } = checkRateLimit("notion-api")
+  if (!allowed) {
+    const errorMsg = `API 요청 제한 초과 (분당 10회). ${retryAfter}초 후 재시도해주세요.`
+    logWarn("getInvoices", "API Rate Limit 도달", { retryAfter })
+    throw new Error(errorMsg)
   }
 
   try {
@@ -120,18 +135,25 @@ const _getInvoices = async (): Promise<Invoice[]> => {
       database_id: NOTION_INVOICE_DB_ID,
     })
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    return (response.results as any[])
+    const invoices = (response.results as any[])
       .filter((page) => page.object === "page")
       .map((page) => pageToInvoice(page))
+
+    logInfo("getInvoices", "견적서 목록 조회 성공", {
+      count: invoices.length,
+      cacheKey: "invoices",
+      revalidate: 60,
+    })
+    return invoices
   } catch (error: unknown) {
     const errorMessage = error instanceof Error ? error.message : String(error)
-    console.error("getInvoices 실패:", errorMessage)
+    logError("getInvoices", "견적서 목록 조회 실패", error)
     throw new Error(`견적서 조회 실패: ${errorMessage}`)
   }
 }
 
 export const getInvoices = unstable_cache(_getInvoices, ["invoices"], {
-  revalidate: 3600,
+  revalidate: 60, // 60초 캐싱
 })
 
 // 별칭 (하위 호환성)
@@ -139,8 +161,24 @@ export const getQuotes = getInvoices
 
 // UUID로 단건 조회
 export async function getInvoiceByQuoteId(quoteId: string): Promise<Invoice | null> {
+  logDebug("getInvoiceByQuoteId", `견적서 단건 조회: ${quoteId}`)
+
   if (DEMO_MODE) {
-    return DEMO_INVOICES.find((q) => q.quoteId === quoteId) || null
+    const invoice = DEMO_INVOICES.find((q) => q.quoteId === quoteId) || null
+    if (invoice) {
+      logInfo("getInvoiceByQuoteId", "더미 모드 - 견적서 찾음", { quoteId })
+    } else {
+      logWarn("getInvoiceByQuoteId", "더미 모드 - 견적서 없음", { quoteId })
+    }
+    return invoice
+  }
+
+  // Rate Limit 체크
+  const { allowed, retryAfter } = checkRateLimit("notion-api")
+  if (!allowed) {
+    const errorMsg = `API 요청 제한 초과 (분당 10회). ${retryAfter}초 후 재시도해주세요.`
+    logWarn("getInvoiceByQuoteId", "API Rate Limit 도달", { quoteId, retryAfter })
+    throw new Error(errorMsg)
   }
 
   try {
@@ -152,12 +190,20 @@ export async function getInvoiceByQuoteId(quoteId: string): Promise<Invoice | nu
         rich_text: { equals: quoteId },
       },
     })
-    if (response.results.length === 0) return null
-    return pageToInvoice(response.results[0])
+    if (response.results.length === 0) {
+      logWarn("getInvoiceByQuoteId", "견적서 없음", { quoteId })
+      return null
+    }
+    const invoice = pageToInvoice(response.results[0])
+    logInfo("getInvoiceByQuoteId", "견적서 조회 성공", {
+      quoteId,
+      invoiceId: invoice.id,
+      title: invoice.title,
+    })
+    return invoice
   } catch (error: unknown) {
-    const errorMessage = error instanceof Error ? error.message : String(error)
-    console.error(`getInvoiceByQuoteId(${quoteId}) 실패:`, errorMessage)
-    throw new Error(`견적서 조회 실패: ${errorMessage}`)
+    logError("getInvoiceByQuoteId", `견적서 조회 실패: ${quoteId}`, error)
+    throw new Error(`견적서 조회 실패: ${error instanceof Error ? error.message : String(error)}`)
   }
 }
 
@@ -166,6 +212,12 @@ export const getQuoteByQuoteId = getInvoiceByQuoteId
 
 // 신규 견적서 생성
 export async function createInvoice(data: CreateInvoiceInput): Promise<Invoice> {
+  logDebug("createInvoice", "견적서 생성 시작", {
+    title: data.title,
+    clientName: data.clientName,
+    itemCount: data.items?.length || 0,
+  })
+
   if (DEMO_MODE) {
     const quoteId = uuidv4()
     const items: InvoiceItem[] = (data.items || []).map((item, idx) => ({
@@ -195,7 +247,23 @@ export async function createInvoice(data: CreateInvoiceInput): Promise<Invoice> 
     }
     DEMO_INVOICES.push(newInvoice)
     revalidatePath("/quotes")
+    logInfo("createInvoice", "더미 모드 - 견적서 생성 완료", {
+      invoiceId: newInvoice.id,
+      quoteId: newInvoice.quoteId,
+      totalAmount,
+    })
     return newInvoice
+  }
+
+  // Rate Limit 체크
+  const { allowed, retryAfter } = checkRateLimit("notion-api")
+  if (!allowed) {
+    const errorMsg = `API 요청 제한 초과 (분당 10회). ${retryAfter}초 후 재시도해주세요.`
+    logWarn("createInvoice", "API Rate Limit 도달", {
+      title: data.title,
+      retryAfter,
+    })
+    throw new Error(errorMsg)
   }
 
   try {
@@ -227,14 +295,27 @@ export async function createInvoice(data: CreateInvoiceInput): Promise<Invoice> 
     })
     revalidatePath("/quotes")
 
+    const invoice = pageToInvoice(response)
+    logInfo("createInvoice", "견적서 생성 성공", {
+      invoiceId: invoice.id,
+      quoteId: invoice.quoteId,
+      title: invoice.title,
+      clientName: invoice.clientName,
+      totalAmount: invoice.totalAmount,
+    })
+
     // TODO: items 배열을 Items DB에 생성하고 Relation 연결
     // 이는 notion-item.ts의 createInvoiceItem 함수에서 처리됨
 
-    return pageToInvoice(response)
+    return invoice
   } catch (error: unknown) {
-    const errorMessage = error instanceof Error ? error.message : String(error)
-    console.error("createInvoice 실패:", errorMessage)
-    throw new Error(`견적서 생성 실패: ${errorMessage}`)
+    logError("createInvoice", "견적서 생성 실패", error, {
+      title: data.title,
+      clientName: data.clientName,
+    })
+    throw new Error(
+      `견적서 생성 실패: ${error instanceof Error ? error.message : String(error)}`
+    )
   }
 }
 
@@ -246,13 +327,35 @@ export async function updateInvoiceStatus(
   pageId: string,
   status: QuoteStatus
 ): Promise<void> {
+  logDebug("updateInvoiceStatus", `상태 변경 시작: ${pageId} → ${status}`)
+
   if (DEMO_MODE) {
     const invoice = DEMO_INVOICES.find((q) => q.id === pageId)
     if (invoice) {
+      const oldStatus = invoice.status
       invoice.status = status
+      logInfo("updateInvoiceStatus", "더미 모드 - 상태 변경 완료", {
+        invoiceId: pageId,
+        oldStatus,
+        newStatus: status,
+      })
+    } else {
+      logWarn("updateInvoiceStatus", "더미 모드 - 견적서 없음", { invoiceId: pageId })
     }
     revalidatePath("/quotes")
     return
+  }
+
+  // Rate Limit 체크
+  const { allowed, retryAfter } = checkRateLimit("notion-api")
+  if (!allowed) {
+    const errorMsg = `API 요청 제한 초과 (분당 10회). ${retryAfter}초 후 재시도해주세요.`
+    logWarn("updateInvoiceStatus", "API Rate Limit 도달", {
+      invoiceId: pageId,
+      newStatus: status,
+      retryAfter,
+    })
+    throw new Error(errorMsg)
   }
 
   try {
@@ -265,10 +368,15 @@ export async function updateInvoiceStatus(
       },
     })
     revalidatePath("/quotes")
+    logInfo("updateInvoiceStatus", "상태 변경 성공", {
+      invoiceId: pageId,
+      newStatus: status,
+    })
   } catch (error: unknown) {
-    const errorMessage = error instanceof Error ? error.message : String(error)
-    console.error(`updateInvoiceStatus(${pageId}, ${status}) 실패:`, errorMessage)
-    throw new Error(`상태 변경 실패: ${errorMessage}`)
+    logError("updateInvoiceStatus", `상태 변경 실패: ${pageId} → ${status}`, error)
+    throw new Error(
+      `상태 변경 실패: ${error instanceof Error ? error.message : String(error)}`
+    )
   }
 }
 
@@ -277,13 +385,33 @@ export const updateQuoteStatus = updateInvoiceStatus
 
 // 견적서 삭제 (아카이브)
 export async function deleteInvoice(pageId: string): Promise<void> {
+  logDebug("deleteInvoice", `견적서 삭제 시작: ${pageId}`)
+
   if (DEMO_MODE) {
     const index = DEMO_INVOICES.findIndex((q) => q.id === pageId)
     if (index > -1) {
+      const invoice = DEMO_INVOICES[index]
       DEMO_INVOICES.splice(index, 1)
+      logInfo("deleteInvoice", "더미 모드 - 견적서 삭제 완료", {
+        invoiceId: pageId,
+        title: invoice.title,
+      })
+    } else {
+      logWarn("deleteInvoice", "더미 모드 - 견적서 없음", { invoiceId: pageId })
     }
     revalidatePath("/quotes")
     return
+  }
+
+  // Rate Limit 체크
+  const { allowed, retryAfter } = checkRateLimit("notion-api")
+  if (!allowed) {
+    const errorMsg = `API 요청 제한 초과 (분당 10회). ${retryAfter}초 후 재시도해주세요.`
+    logWarn("deleteInvoice", "API Rate Limit 도달", {
+      invoiceId: pageId,
+      retryAfter,
+    })
+    throw new Error(errorMsg)
   }
 
   try {
@@ -292,10 +420,14 @@ export async function deleteInvoice(pageId: string): Promise<void> {
       archived: true,
     })
     revalidatePath("/quotes")
+    logInfo("deleteInvoice", "견적서 삭제 성공", {
+      invoiceId: pageId,
+    })
   } catch (error: unknown) {
-    const errorMessage = error instanceof Error ? error.message : String(error)
-    console.error(`deleteInvoice(${pageId}) 실패:`, errorMessage)
-    throw new Error(`견적서 삭제 실패: ${errorMessage}`)
+    logError("deleteInvoice", `견적서 삭제 실패: ${pageId}`, error)
+    throw new Error(
+      `견적서 삭제 실패: ${error instanceof Error ? error.message : String(error)}`
+    )
   }
 }
 

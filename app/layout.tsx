@@ -3,14 +3,20 @@ import { Geist, Geist_Mono } from "next/font/google"
 import { Providers } from "./providers"
 import "./globals.css"
 
+// 폰트 최적화: display="swap" 사용 (로컬 폰트 먼저 → 웹 폰트 로드되면 교체)
+// 사용자가 폰트 로딩을 기다리지 않고 콘텐츠를 즉시 볼 수 있음
 const geistSans = Geist({
   variable: "--font-geist-sans",
   subsets: ["latin"],
+  display: "swap", // FOUT(Flash of Unstyled Text) 방지
+  preload: true,
 })
 
 const geistMono = Geist_Mono({
   variable: "--font-geist-mono",
   subsets: ["latin"],
+  display: "swap",
+  preload: true,
 })
 
 export const metadata: Metadata = {
