@@ -86,7 +86,7 @@ export async function createInvoiceItem(
     const response = await notion.pages.create({
       parent: { database_id: NOTION_ITEMS_DB_ID },
       properties: {
-        Name: {
+        Title: {
           title: [{ text: { content: data.name } }],
         },
         description: {
@@ -101,7 +101,7 @@ export async function createInvoiceItem(
         unitPrice: {
           number: data.unitPrice,
         },
-        sortOrder: {
+        order: {
           number: sortOrder,
         },
         invoice: {
@@ -150,7 +150,7 @@ export async function updateInvoiceItem(
     const updateProps: Record<string, unknown> = {}
 
     if (data.name !== undefined) {
-      updateProps.Name = {
+      updateProps.Title = {
         title: [{ text: { content: data.name } }],
       }
     }

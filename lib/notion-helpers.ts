@@ -26,14 +26,15 @@ export function getRollupNumber(prop: any): number {
 export function pageToInvoiceItem(page: any): InvoiceItem {
   const props = page.properties || {}
 
-  const name = getRichTextContent(props.Name?.title || [])
+  // Items DB 속성명: Title (not Name), order (not sortOrder)
+  const name = getRichTextContent(props.Title?.title || [])
   const description = getRichTextContent(props.description?.rich_text || [])
   const quantity = props.quantity?.number || 0
   const unit = getRichTextContent(props.unit?.rich_text || [])
   const unitPrice = props.unitPrice?.number || 0
   const subtotal = getFormulaNumber(props.subtotal)
   const invoiceId = props.invoice?.relation?.[0]?.id || undefined
-  const sortOrder = props.sortOrder?.number || undefined
+  const sortOrder = props.order?.number || undefined
 
   return {
     id: page.id,
