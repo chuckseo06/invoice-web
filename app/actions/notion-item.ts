@@ -1,7 +1,7 @@
 "use server"
 
 import { revalidatePath } from "next/cache"
-import { notion, NOTION_ITEMS_DB_ID } from "@/lib/notion"
+import { notion, NOTION_ITEMS_DB_ID, resolveDataSourceId } from "@/lib/notion"
 import { pageToInvoiceItem } from "@/lib/notion-helpers"
 import { checkRateLimit } from "@/lib/rate-limiter"
 import { logDebug, logInfo, logWarn, logError } from "@/lib/logger"
@@ -23,9 +23,10 @@ export async function getItemsByInvoiceId(invoicePageId: string): Promise<Invoic
   }
 
   try {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const response = await (notion.databases.query as any)({
-      database_id: NOTION_ITEMS_DB_ID,
+    // database_id → data_source_id 해석 후 조회
+    const dataSourceId = await resolveDataSourceId(NOTION_ITEMS_DB_ID)
+    const response = await notion.dataSources.query({
+      data_source_id: dataSourceId,
       filter: {
         property: "invoice",
         relation: { contains: invoicePageId },
@@ -81,6 +82,7 @@ export async function createInvoiceItem(
   }
 
   try {
+    // pages.create는 database_id 사용 (data_source_id 아님)
     const response = await notion.pages.create({
       parent: { database_id: NOTION_ITEMS_DB_ID },
       properties: {
@@ -175,7 +177,8 @@ export async function updateInvoiceItem(
 
     await notion.pages.update({
       page_id: pageId,
-      properties: updateProps,
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      properties: updateProps as any,
     })
 
     revalidatePath("/quotes")

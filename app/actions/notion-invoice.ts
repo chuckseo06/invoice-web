@@ -3,14 +3,16 @@
 import { revalidatePath } from "next/cache"
 import { unstable_cache } from "next/cache"
 import { v4 as uuidv4 } from "uuid"
-import { notion, NOTION_INVOICE_DB_ID } from "@/lib/notion"
+import { APIResponseError } from "@notionhq/client"
+import { notion, NOTION_INVOICE_DB_ID, resolveDataSourceId } from "@/lib/notion"
 import { pageToInvoice } from "@/lib/notion-helpers"
 import { checkRateLimit } from "@/lib/rate-limiter"
 import { logDebug, logInfo, logWarn, logError } from "@/lib/logger"
-import type { Invoice, CreateInvoiceInput, QuoteStatus, InvoiceItem } from "@/types"
+import { createInvoiceItem, deleteInvoiceItem, getItemsByInvoiceId } from "@/app/actions/notion-item"
+import type { Invoice, CreateInvoiceInput, UpdateInvoiceInput, QuoteStatus, InvoiceItem } from "@/types"
 
-// 더미 모드 설정 (UI/UX 테스트용) — 실제 API 연동 시 false로 변경 후 삭제
-const DEMO_MODE = true
+// 더미 모드: NOTION_TOKEN이 없으면 Mock 데이터, 있으면 실제 API 호출
+const DEMO_MODE = !process.env.NOTION_TOKEN
 
 // 더미 데이터 (UI 테스트용)
 const DEMO_INVOICES: Invoice[] = [
@@ -130,9 +132,10 @@ const _getInvoices = async (): Promise<Invoice[]> => {
   }
 
   try {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const response = await (notion.databases.query as any)({
-      database_id: NOTION_INVOICE_DB_ID,
+    // database_id → data_source_id 해석 후 조회
+    const dataSourceId = await resolveDataSourceId(NOTION_INVOICE_DB_ID)
+    const response = await notion.dataSources.query({
+      data_source_id: dataSourceId,
     })
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const invoices = (response.results as any[])
@@ -147,7 +150,18 @@ const _getInvoices = async (): Promise<Invoice[]> => {
     return invoices
   } catch (error: unknown) {
     const errorMessage = error instanceof Error ? error.message : String(error)
-    logError("getInvoices", "견적서 목록 조회 실패", error)
+
+    // Notion API 에러 상세 정보 로깅
+    if (error instanceof APIResponseError) {
+      logError("getInvoices", "견적서 목록 조회 실패 (Notion API)", error, {
+        status: error.status,
+        code: error.code,
+        notionMessage: error.message,
+      })
+    } else {
+      logError("getInvoices", "견적서 목록 조회 실패", error)
+    }
+
     throw new Error(`견적서 조회 실패: ${errorMessage}`)
   }
 }
@@ -182,9 +196,10 @@ export async function getInvoiceByQuoteId(quoteId: string): Promise<Invoice | nu
   }
 
   try {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const response = await (notion.databases.query as any)({
-      database_id: NOTION_INVOICE_DB_ID,
+    // database_id → data_source_id 해석 후 조회
+    const dataSourceId = await resolveDataSourceId(NOTION_INVOICE_DB_ID)
+    const response = await notion.dataSources.query({
+      data_source_id: dataSourceId,
       filter: {
         property: "quoteId",
         rich_text: { equals: quoteId },
@@ -202,7 +217,16 @@ export async function getInvoiceByQuoteId(quoteId: string): Promise<Invoice | nu
     })
     return invoice
   } catch (error: unknown) {
-    logError("getInvoiceByQuoteId", `견적서 조회 실패: ${quoteId}`, error)
+    // Notion API 에러 상세 정보 로깅
+    if (error instanceof APIResponseError) {
+      logError("getInvoiceByQuoteId", `견적서 조회 실패: ${quoteId} (Notion API)`, error, {
+        status: error.status,
+        code: error.code,
+        notionMessage: error.message,
+      })
+    } else {
+      logError("getInvoiceByQuoteId", `견적서 조회 실패: ${quoteId}`, error)
+    }
     throw new Error(`견적서 조회 실패: ${error instanceof Error ? error.message : String(error)}`)
   }
 }
@@ -268,6 +292,7 @@ export async function createInvoice(data: CreateInvoiceInput): Promise<Invoice> 
 
   try {
     const quoteId = uuidv4()
+    // pages.create는 database_id 사용 (data_source_id 아님)
     const response = await notion.pages.create({
       parent: { database_id: NOTION_INVOICE_DB_ID },
       properties: {
@@ -304,15 +329,41 @@ export async function createInvoice(data: CreateInvoiceInput): Promise<Invoice> 
       totalAmount: invoice.totalAmount,
     })
 
-    // TODO: items 배열을 Items DB에 생성하고 Relation 연결
-    // 이는 notion-item.ts의 createInvoiceItem 함수에서 처리됨
+    // items 배열을 Items DB에 생성하고 Relation 연결
+    if (data.items && data.items.length > 0) {
+      try {
+        const createdItems = await Promise.all(
+          data.items.map((item, idx) => createInvoiceItem(invoice.id, item, idx))
+        )
+        logInfo("createInvoice", "항목 생성 완료", {
+          invoiceId: invoice.id,
+          itemCount: createdItems.length,
+        })
+        invoice.items = createdItems
+      } catch (itemError) {
+        const itemErrorMsg = itemError instanceof Error ? itemError.message : String(itemError)
+        logWarn("createInvoice", "항목 생성 중 오류 (견적서는 생성됨)", { error: itemErrorMsg })
+        // 견적서는 생성되었으므로 에러를 던지지 않고 경고만 로깅
+      }
+    }
 
     return invoice
   } catch (error: unknown) {
-    logError("createInvoice", "견적서 생성 실패", error, {
-      title: data.title,
-      clientName: data.clientName,
-    })
+    // Notion API 에러 상세 정보 로깅
+    if (error instanceof APIResponseError) {
+      logError("createInvoice", "견적서 생성 실패 (Notion API)", error, {
+        title: data.title,
+        clientName: data.clientName,
+        status: error.status,
+        code: error.code,
+        notionMessage: error.message,
+      })
+    } else {
+      logError("createInvoice", "견적서 생성 실패", error, {
+        title: data.title,
+        clientName: data.clientName,
+      })
+    }
     throw new Error(
       `견적서 생성 실패: ${error instanceof Error ? error.message : String(error)}`
     )
@@ -373,7 +424,16 @@ export async function updateInvoiceStatus(
       newStatus: status,
     })
   } catch (error: unknown) {
-    logError("updateInvoiceStatus", `상태 변경 실패: ${pageId} → ${status}`, error)
+    // Notion API 에러 상세 정보 로깅
+    if (error instanceof APIResponseError) {
+      logError("updateInvoiceStatus", `상태 변경 실패: ${pageId} → ${status} (Notion API)`, error, {
+        status: error.status,
+        code: error.code,
+        notionMessage: error.message,
+      })
+    } else {
+      logError("updateInvoiceStatus", `상태 변경 실패: ${pageId} → ${status}`, error)
+    }
     throw new Error(
       `상태 변경 실패: ${error instanceof Error ? error.message : String(error)}`
     )
@@ -424,7 +484,16 @@ export async function deleteInvoice(pageId: string): Promise<void> {
       invoiceId: pageId,
     })
   } catch (error: unknown) {
-    logError("deleteInvoice", `견적서 삭제 실패: ${pageId}`, error)
+    // Notion API 에러 상세 정보 로깅
+    if (error instanceof APIResponseError) {
+      logError("deleteInvoice", `견적서 삭제 실패: ${pageId} (Notion API)`, error, {
+        status: error.status,
+        code: error.code,
+        notionMessage: error.message,
+      })
+    } else {
+      logError("deleteInvoice", `견적서 삭제 실패: ${pageId}`, error)
+    }
     throw new Error(
       `견적서 삭제 실패: ${error instanceof Error ? error.message : String(error)}`
     )
@@ -433,3 +502,243 @@ export async function deleteInvoice(pageId: string): Promise<void> {
 
 // 별칭 (하위 호환성)
 export const deleteQuote = deleteInvoice
+
+// 견적서 수정
+export async function updateInvoice(
+  pageId: string,
+  data: UpdateInvoiceInput
+): Promise<Invoice> {
+  logDebug("updateInvoice", `견적서 수정 시작: ${pageId}`, {
+    title: data.title,
+    clientName: data.clientName,
+    itemCount: data.items?.length || 0,
+  })
+
+  if (DEMO_MODE) {
+    const invoice = DEMO_INVOICES.find((q) => q.id === pageId)
+    if (!invoice) {
+      throw new Error("견적서를 찾을 수 없습니다.")
+    }
+
+    if (data.title) invoice.title = data.title
+    if (data.clientName) invoice.clientName = data.clientName
+    if (data.description !== undefined) invoice.description = data.description
+    if (data.validUntil !== undefined) invoice.validUntil = data.validUntil
+
+    if (data.items && data.items.length > 0) {
+      const items: InvoiceItem[] = data.items.map((item, idx) => ({
+        id: `demo-item-${Date.now()}-${idx}`,
+        name: item.name,
+        description: item.description,
+        quantity: item.quantity,
+        unit: item.unit,
+        unitPrice: item.unitPrice,
+        subtotal: item.quantity * item.unitPrice,
+        sortOrder: idx,
+      }))
+      invoice.items = items
+      invoice.totalAmount = items.reduce((sum, item) => sum + item.subtotal, 0)
+    }
+
+    revalidatePath("/quotes")
+    logInfo("updateInvoice", "더미 모드 - 견적서 수정 완료", {
+      invoiceId: pageId,
+      title: invoice.title,
+    })
+    return invoice
+  }
+
+  const { allowed, retryAfter } = checkRateLimit("notion-api")
+  if (!allowed) {
+    const errorMsg = `API 요청 제한 초과 (분당 10회). ${retryAfter}초 후 재시도해주세요.`
+    logWarn("updateInvoice", "API Rate Limit 도달", { pageId, retryAfter })
+    throw new Error(errorMsg)
+  }
+
+  try {
+    const updateProps: Record<string, unknown> = {}
+
+    if (data.title !== undefined) {
+      updateProps.title = {
+        title: [{ text: { content: data.title } }],
+      }
+    }
+    if (data.clientName !== undefined) {
+      updateProps.clientName = {
+        rich_text: [{ text: { content: data.clientName } }],
+      }
+    }
+    if (data.description !== undefined) {
+      updateProps.description = {
+        rich_text: [{ text: { content: data.description } }],
+      }
+    }
+    if (data.validUntil !== undefined) {
+      updateProps.validUntil = data.validUntil
+        ? {
+            date: { start: data.validUntil },
+          }
+        : null
+    }
+
+    await notion.pages.update({
+      page_id: pageId,
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      properties: updateProps as any,
+    })
+
+    // 항목 수정: 기존 항목 모두 삭제 후 새로 생성
+    if (data.items !== undefined) {
+      try {
+        const existingItems = await getItemsByInvoiceId(pageId)
+        await Promise.all(existingItems.map((item) => deleteInvoiceItem(item.id)))
+
+        if (data.items.length > 0) {
+          await Promise.all(
+            data.items.map((item, idx) => createInvoiceItem(pageId, item, idx))
+          )
+        }
+      } catch (itemError) {
+        const itemErrorMsg = itemError instanceof Error ? itemError.message : String(itemError)
+        logWarn("updateInvoice", "항목 수정 중 오류", { error: itemErrorMsg })
+      }
+    }
+
+    const response = await notion.pages.retrieve({ page_id: pageId })
+    const invoice = pageToInvoice(response)
+
+    revalidatePath("/quotes")
+    logInfo("updateInvoice", "견적서 수정 성공", {
+      invoiceId: pageId,
+      title: invoice.title,
+    })
+    return invoice
+  } catch (error: unknown) {
+    // Notion API 에러 상세 정보 로깅
+    if (error instanceof APIResponseError) {
+      logError("updateInvoice", `견적서 수정 실패: ${pageId} (Notion API)`, error, {
+        status: error.status,
+        code: error.code,
+        notionMessage: error.message,
+      })
+    } else {
+      logError("updateInvoice", `견적서 수정 실패: ${pageId}`, error)
+    }
+    throw new Error(
+      `견적서 수정 실패: ${error instanceof Error ? error.message : String(error)}`
+    )
+  }
+}
+
+// 별칭 (하위 호환성)
+export const updateQuote = updateInvoice
+
+// 견적서 복제
+export async function duplicateInvoice(pageId: string): Promise<Invoice> {
+  logDebug("duplicateInvoice", `견적서 복제 시작: ${pageId}`)
+
+  if (DEMO_MODE) {
+    const original = DEMO_INVOICES.find((q) => q.id === pageId)
+    if (!original) {
+      throw new Error("견적서를 찾을 수 없습니다.")
+    }
+
+    const quoteId = uuidv4()
+    const newInvoice: Invoice = {
+      id: `demo-${Date.now()}`,
+      quoteId,
+      title: `${original.title} (복사본)`,
+      clientName: original.clientName,
+      description: original.description,
+      status: "Draft",
+      validUntil: original.validUntil,
+      createdDate: new Date().toISOString().split("T")[0],
+      totalAmount: original.totalAmount,
+      items: original.items?.map((item, idx) => ({
+        ...item,
+        id: `demo-item-${Date.now()}-${idx}`,
+      })),
+    }
+    DEMO_INVOICES.push(newInvoice)
+    revalidatePath("/quotes")
+    logInfo("duplicateInvoice", "더미 모드 - 견적서 복제 완료", {
+      originalId: pageId,
+      newId: newInvoice.id,
+      newTitle: newInvoice.title,
+    })
+    return newInvoice
+  }
+
+  const { allowed, retryAfter } = checkRateLimit("notion-api")
+  if (!allowed) {
+    const errorMsg = `API 요청 제한 초과 (분당 10회). ${retryAfter}초 후 재시도해주세요.`
+    logWarn("duplicateInvoice", "API Rate Limit 도달", { pageId, retryAfter })
+    throw new Error(errorMsg)
+  }
+
+  try {
+    const original = await getInvoiceByPageId(pageId)
+    if (!original) {
+      throw new Error("견적서를 찾을 수 없습니다.")
+    }
+
+    const items = original.items || []
+
+    const createData: CreateInvoiceInput = {
+      title: `${original.title} (복사본)`,
+      clientName: original.clientName,
+      description: original.description,
+      validUntil: original.validUntil,
+      items: items.map((item) => ({
+        name: item.name,
+        description: item.description,
+        quantity: item.quantity,
+        unit: item.unit,
+        unitPrice: item.unitPrice,
+      })),
+    }
+
+    const duplicated = await createInvoice(createData)
+    logInfo("duplicateInvoice", "견적서 복제 성공", {
+      originalId: pageId,
+      newId: duplicated.id,
+      newTitle: duplicated.title,
+    })
+    return duplicated
+  } catch (error: unknown) {
+    logError("duplicateInvoice", `견적서 복제 실패: ${pageId}`, error)
+    throw new Error(
+      `견적서 복제 실패: ${error instanceof Error ? error.message : String(error)}`
+    )
+  }
+}
+
+// 별칭 (하위 호환성)
+export const duplicateQuote = duplicateInvoice
+
+// 페이지 ID로 단건 조회 (내부용)
+async function getInvoiceByPageId(pageId: string): Promise<Invoice | null> {
+  logDebug("getInvoiceByPageId", `견적서 단건 조회: ${pageId}`)
+
+  if (DEMO_MODE) {
+    return DEMO_INVOICES.find((q) => q.id === pageId) || null
+  }
+
+  try {
+    const response = await notion.pages.retrieve({ page_id: pageId })
+    const invoice = pageToInvoice(response)
+
+    // 항목 조회
+    try {
+      const items = await getItemsByInvoiceId(pageId)
+      invoice.items = items
+    } catch {
+      // 항목 조회 실패는 무시
+    }
+
+    return invoice
+  } catch (error: unknown) {
+    logError("getInvoiceByPageId", `견적서 조회 실패: ${pageId}`, error)
+    return null
+  }
+}
