@@ -81,6 +81,16 @@ export interface CreateInvoiceInput {
   items?: CreateInvoiceItemInput[] // 함께 생성할 라인 아이템들
 }
 
+// 견적서 수정 폼 입력
+export interface UpdateInvoiceInput {
+  title?: string
+  clientName?: string
+  description?: string
+  validUntil?: string
+  items?: CreateInvoiceItemInput[] // 항목들은 삭제 후 재생성
+}
+
 // 하위 호환성: 기존 Quote, CreateQuoteInput 타입 alias 유지
 export type Quote = Invoice
 export type CreateQuoteInput = CreateInvoiceInput
+export type UpdateQuoteInput = UpdateInvoiceInput
